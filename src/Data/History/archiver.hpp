@@ -1,7 +1,7 @@
 
 /******************************************************************************
 * MODULE     : archiver.hpp
-* DESCRIPTION: undo/redo history
+* DESCRIPTION: manage undo/redo history
 * COPYRIGHT  : (C) 2009  Joris van der Hoeven
 *******************************************************************************
 * This software falls under the GNU general public license version 3 or later.
@@ -13,38 +13,48 @@
 #define ARCHIVER_H
 #include "patch.hpp"
 
+void global_clear_history ();
+void global_confirm ();
+
 class archiver_rep: public concrete_struct {
-  patch before;         // undo history
-  patch current;        // current sequence of modifications
-  patch after;          // redo future
-  int   depth;          // history depth
-  int   last_save;      // history depth at last save
-  int   last_autosave;  // history depth at last autosave
+  patch    archive;        // undo and redo archive
+  patch    current;        // current sequence of modifications
+  int      depth;          // archive depth
+  int      last_save;      // archive depth at last save
+  int      last_autosave;  // archive depth at last autosave
+  double   the_author;     // the author corresponding to the archiver
+  path     rp;             // root path for document
+  observer undo_obs;       // observer for undoing changes
+  bool     versioning;     // true during undo and redo operations
 
 protected:
   void apply (patch p);
-  void show_all ();
 
 public:
-  archiver_rep ();
+  archiver_rep (double author, path rp);
   ~archiver_rep ();
   void clear ();
+  void show_all ();
 
-  void archive (patch p);
+  void add (modification m);
+  void start_slave (double a);
   bool active ();
+  bool has_history ();
   void cancel ();    // cancel current series of modifications
   void confirm ();   // move current modifications to history
-  void merge ();     // merge current modifications with last history item
   void retract ();   // reopen last history item for further modifications
   void forget ();    // undo and forget about last history item
   void simplify ();
 
-  bool no_more_undo ();
-  bool no_more_redo ();
   int  undo_possibilities ();
   int  redo_possibilities ();
-  path undo ();
+  path undo_one (int i);
+  path redo_one (int i);
+  path undo (int i=0);
   path redo (int i=0);
+  void mark_start (double m);
+  bool mark_cancel (double m);
+  void mark_end (double m);
 
   void require_save ();
   void require_autosave ();
@@ -52,11 +62,15 @@ public:
   void notify_autosave ();
   bool conform_save ();
   bool conform_autosave ();
+
+  friend void archive_announce (archiver_rep* arch, modification mod);
+  friend void global_clear_history ();
+  friend void global_confirm ();
 };
 
 class archiver {
 CONCRETE (archiver);
-  archiver ();
+  archiver (double author, path rp);
 };
 CONCRETE_CODE (archiver);
 

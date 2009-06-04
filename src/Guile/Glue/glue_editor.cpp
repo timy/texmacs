@@ -1931,6 +1931,28 @@ tmg_clear_undo_history () {
 }
 
 SCM
+tmg_commit_changes () {
+  // SCM_DEFER_INTS;
+  get_server()->get_editor()->end_editing ();
+  // SCM_ALLOW_INTS;
+
+  return SCM_UNSPECIFIED;
+}
+
+SCM
+tmg_start_slave (SCM arg1) {
+  SCM_ASSERT_DOUBLE (arg1, SCM_ARG1, "start-slave");
+
+  double in1= scm_to_double (arg1);
+
+  // SCM_DEFER_INTS;
+  get_server()->get_editor()->start_slave (in1);
+  // SCM_ALLOW_INTS;
+
+  return SCM_UNSPECIFIED;
+}
+
+SCM
 tmg_remove_undo_mark () {
   // SCM_DEFER_INTS;
   get_server()->get_editor()->remove_undo_mark ();
@@ -1996,6 +2018,15 @@ tmg_redo (SCM arg1) {
 
   // SCM_DEFER_INTS;
   get_server()->get_editor()->redo (in1);
+  // SCM_ALLOW_INTS;
+
+  return SCM_UNSPECIFIED;
+}
+
+SCM
+tmg_show_history () {
+  // SCM_DEFER_INTS;
+  get_server()->get_editor()->show_history ();
   // SCM_ALLOW_INTS;
 
   return SCM_UNSPECIFIED;
@@ -2737,6 +2768,8 @@ initialize_glue_editor () {
   scm_new_procedure ("clipboard-get-import", (FN) tmg_clipboard_get_import, 0, 0, 0);
   scm_new_procedure ("clipboard-get-export", (FN) tmg_clipboard_get_export, 0, 0, 0);
   scm_new_procedure ("clear-undo-history", (FN) tmg_clear_undo_history, 0, 0, 0);
+  scm_new_procedure ("commit-changes", (FN) tmg_commit_changes, 0, 0, 0);
+  scm_new_procedure ("start-slave", (FN) tmg_start_slave, 1, 0, 0);
   scm_new_procedure ("remove-undo-mark", (FN) tmg_remove_undo_mark, 0, 0, 0);
   scm_new_procedure ("add-undo-mark", (FN) tmg_add_undo_mark, 0, 0, 0);
   scm_new_procedure ("unredoable-undo", (FN) tmg_unredoable_undo, 0, 0, 0);
@@ -2744,6 +2777,7 @@ initialize_glue_editor () {
   scm_new_procedure ("undo", (FN) tmg_undo, 1, 0, 0);
   scm_new_procedure ("redo-possibilities", (FN) tmg_redo_possibilities, 0, 0, 0);
   scm_new_procedure ("redo", (FN) tmg_redo, 1, 0, 0);
+  scm_new_procedure ("show-history", (FN) tmg_show_history, 0, 0, 0);
   scm_new_procedure ("in-graphics?", (FN) tmg_in_graphicsP, 0, 0, 0);
   scm_new_procedure ("get-graphical-x", (FN) tmg_get_graphical_x, 0, 0, 0);
   scm_new_procedure ("get-graphical-y", (FN) tmg_get_graphical_y, 0, 0, 0);

@@ -12,6 +12,7 @@
 #include "edit_interface.hpp"
 #include "analyze.hpp"
 #include "tm_buffer.hpp"
+#include "archiver.hpp"
 
 /******************************************************************************
 * Basic subroutines for keyboard handling
@@ -24,8 +25,7 @@ edit_interface_rep::get_input_mode () {
 
 void
 edit_interface_rep::set_input_mode (int mode) {
-  sh_s= string ("");
-  sh_busy= false;
+  interrupt_shortcut ();
   // avoids keyboard shorthands when using the menu between two keystrokes
 
   if ((mode == INPUT_NORMAL) && (input_mode != INPUT_NORMAL)) {
@@ -69,9 +69,11 @@ edit_interface_rep::kbd_get_command (string which, string& help, command& c) {
 * Main keyboard routines
 ******************************************************************************/
 
-bool
-edit_interface_rep::shortcut_active () {
-  return sh_busy;
+void
+edit_interface_rep::interrupt_shortcut () {
+  if (sh_mark != 0) mark_end (sh_mark);
+  sh_s= "";
+  sh_mark= 0;
 }
 
 bool
@@ -83,17 +85,21 @@ edit_interface_rep::try_shortcut (string comb) {
 
   sv->get_keycomb (comb, status, cmd, shorth, help);
   //cout << "Try " << comb << " -> " << shorth << ", " << help
-  //<< "; " << sh_busy << ", " << status << "\n";
+  //<< "; " << sh_mark << ", " << status << "\n";
   if (status != 0) {
-    if (sh_busy && !forget ()) return false;
+    if (sh_mark != 0 && !mark_cancel (sh_mark)) {
+      sh_mark= 0;
+      return false;
+    }
     sh_s= comb;
+    sh_mark= new_marker ();
+    mark_start (sh_mark);
     string rew= sv->kbd_post_rewrite (sh_s);
     if (N(help)>0) set_message (help, rew);
     else set_message ("keyboard shorthand: " * rew, shorth);
     if ((status & 1) == 1) cmd ();
     else if (N(shorth) > 0) insert_tree (shorth);
-    sh_busy= modifying ();
-    //cout << "Busy= " << sh_busy << "\n";
+    //cout << "Mark= " << sh_mark << "\n";
     return true;    
   }
 
@@ -139,8 +145,7 @@ edit_interface_rep::key_press (string key) {
   string new_sh= N(sh_s)==0? key: sh_s * " " * key;
   if (try_shortcut (new_sh)) return;
   if (new_sh != key) {
-    sh_s= string ("");
-    sh_busy= false;
+    interrupt_shortcut ();
     if (try_shortcut (key)) return;
   }
 
@@ -150,8 +155,7 @@ edit_interface_rep::key_press (string key) {
     if ((((i >= 32) && (i <= 127)) || ((i >= 128) && (i <= 255))) &&
 	!inside_active_graphics ())
       insert_tree (rew);
-    sh_s= string ("");
-    sh_busy= false;
+    interrupt_shortcut ();
   }
 }
 

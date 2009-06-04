@@ -206,6 +206,8 @@
 
   ;; undo and redo
   (clear-undo-history clear_undo_history (void))
+  (commit-changes end_editing (void))
+  (start-slave start_slave (void double))
   (remove-undo-mark remove_undo_mark (void))
   (add-undo-mark add_undo_mark (void))
   (unredoable-undo unredoable_undo (void))
@@ -213,6 +215,7 @@
   (undo undo (void int))
   (redo-possibilities redo_possibilities (int))
   (redo redo (void int))
+  (show-history show_history (void))
 
   ;; graphics
   (in-graphics? inside_graphics (bool))

@@ -11,16 +11,21 @@
 
 #include "patch.hpp"
 
+int insert_length (tree t);
+
 /******************************************************************************
 * Concrete patches
 ******************************************************************************/
 
 class modification_patch_rep: public patch_rep {
   modification mod;
+  modification inv;
 public:
-  modification_patch_rep (modification mod2): mod (mod2) {}
+  modification_patch_rep (modification mod2, modification inv2):
+    mod (mod2), inv (inv2) {}
   int get_type () { return PATCH_MODIFICATION; }
   modification get_modification () { return mod; }
+  modification get_inverse () { return inv; }
 };
 
 class compound_patch_rep: public patch_rep {
@@ -28,6 +33,15 @@ class compound_patch_rep: public patch_rep {
 public:
   compound_patch_rep (array<patch> a2): a (a2) {}
   int get_type () { return PATCH_COMPOUND; }
+  int get_arity () { return N(a); }
+  patch get_child (int i) { return a[i]; }
+};
+
+class branch_patch_rep: public patch_rep {
+  array<patch> a;
+public:
+  branch_patch_rep (array<patch> a2): a (a2) {}
+  int get_type () { return PATCH_BRANCH; }
   int get_arity () { return N(a); }
   patch get_child (int i) { return a[i]; }
 };
@@ -55,10 +69,14 @@ public:
   double get_author () { return author; }
 };
 
-patch::patch (modification mod):
-  rep (tm_new<modification_patch_rep> (mod)) { rep->ref_count= 1; }
+patch::patch (modification mod, modification inv):
+  rep (tm_new<modification_patch_rep> (mod, inv)) { rep->ref_count= 1; }
 patch::patch (array<patch> a):
   rep (tm_new<compound_patch_rep> (a)) { rep->ref_count= 1; }
+patch::patch (bool branch, array<patch> a):
+  rep (branch?
+       ((patch_rep*) tm_new<branch_patch_rep> (a)):
+       ((patch_rep*) tm_new<compound_patch_rep> (a))) { rep->ref_count= 1; }
 patch::patch (patch p1, patch p2):
   rep (tm_new<compound_patch_rep> (array<patch>(p1,p2))) { rep->ref_count= 1; }
 patch::patch (double author, bool create):
@@ -66,12 +84,75 @@ patch::patch (double author, bool create):
 patch::patch (double author, patch p):
   rep (tm_new<author_patch_rep> (author, p)) { rep->ref_count= 1; }
 
+/******************************************************************************
+* Internal subroutines
+******************************************************************************/
+
 array<patch>
-get_children (patch p) {
+singleton (patch p) {
+  array<patch> a (1);
+  a[0]= p;
+  return a;
+}
+
+static array<patch>
+get_array (patch p) {
   int i, n= N(p);
   array<patch> a (n);
   for (i=0; i<N(p); i++) a[i]= p[i];
   return a;
+}
+
+int
+nr_children (patch p) {
+  if (get_type (p) != PATCH_COMPOUND) return 1;
+  else return N(p);
+}
+
+patch
+child (patch p, int i) {
+  ASSERT (0 <= i && i < nr_children (p), "index out of range");
+  if (get_type (p) != PATCH_COMPOUND) return p;
+  else return p[i];
+}
+
+array<patch>
+children (patch p) {
+  if (get_type (p) != PATCH_COMPOUND) return singleton (p);
+  else return get_array (p);
+}
+
+array<patch>
+children (patch p, int i, int j) {
+  ASSERT (0 <= i && i <= nr_children (p), "index out of range");
+  ASSERT (i <= j && j <= nr_children (p), "index out of range");
+  return range (children (p), i, j);
+}
+
+int
+nr_branches (patch p) {
+  if (get_type (p) != PATCH_BRANCH) return 1;
+  else return N(p);
+}
+
+patch
+branch (patch p, int i) {
+  ASSERT (0 <= i && i < nr_branches (p), "index out of range");
+  if (get_type (p) != PATCH_BRANCH) return p;
+  else return p[i];
+}
+
+array<patch>
+branches (patch p) {
+  if (get_type (p) != PATCH_BRANCH) return singleton (p);
+  else return get_array (p);
+}
+
+array<patch>
+branches (patch p, int i, int j) {
+  ASSERT (0 <= i && i <= nr_branches (p), "index out of range");
+  ASSERT (i <= j && j <= nr_branches (p), "index out of range");
+  return range (branches (p), i, j);
 }
 
 /******************************************************************************
@@ -85,6 +166,13 @@ new_author () {
   static double next_author= 0.0;
   next_author += 1.0;
   return next_author;
+}
+
+double
+new_marker () {
+  static double next_marker= 0.5;
+  next_marker += 1.0;
+  return next_marker;
 }
 
 void
@@ -105,13 +193,23 @@ ostream&
 operator << (ostream& out, patch p) {
   switch (get_type (p)) {
   case PATCH_MODIFICATION:
-    out << get_modification (p);
+    out << get_modification (p) << " -- " << get_inverse (p);
     break;
   case PATCH_COMPOUND:
-    out << "Composite" << INDENT;
-    for (int i=0; i<N(p); i++)
-      out << LF << p[i];
-    out << UNINDENT;
+    if (N(p) == 0) out << "No children";
+    else {
+      out << "Composite" << INDENT;
+      for (int i=0; i<N(p); i++)
+	out << LF << p[i];
+      out << UNINDENT;
+    }
+    break;
+  case PATCH_BRANCH:
+    if (N(p) == 0) out << "No branches";
+    else for (int i=0; i<N(p); i++) {
+      if (i != 0) out << LF;
+      out << "Branch " << i << INDENT << LF << p[i] << UNINDENT;
+    }
     break;
   case PATCH_BIRTH:
     if (get_birth (p)) out << "Birth ";
@@ -133,13 +231,14 @@ patch
 copy (patch p) {
   switch (get_type (p)) {
   case PATCH_MODIFICATION:
-    return patch (copy (get_modification (p)));
+    return patch (copy (get_modification (p)), copy (get_inverse (p)));
   case PATCH_COMPOUND:
+  case PATCH_BRANCH:
     {
       int i, n= N(p);
       array<patch> r (n);
       for (i=0; i<N(p); i++) r[i]= copy (p[i]);
-      return r;
+      return patch (get_type (p) == PATCH_BRANCH, r);
     }
   case PATCH_BIRTH:
     return p;
@@ -160,14 +259,19 @@ is_applicable (patch p, tree t) {
   switch (get_type (p)) {
   case PATCH_MODIFICATION:
     return is_applicable (t, get_modification (p));
-  case PATCH_BIRTH:
-    return true;
   case PATCH_COMPOUND:
-  case PATCH_AUTHOR:
     for (int i=0; i<N(p); i++) {
       if (!is_applicable (p[i], t)) return false;
       t= clean_apply (p[i], t);
     }
+    return true;
+  case PATCH_BRANCH:
+  case PATCH_AUTHOR:
+    for (int i=0; i<N(p); i++)
+      if (!is_applicable (p[i], t))
+	return false;
+    return true;
+  case PATCH_BIRTH:
     return true;
   default:
     FAILED ("unsupported patch type");
@@ -180,12 +284,14 @@ clean_apply (patch p, tree t) {
   switch (get_type (p)) {
   case PATCH_MODIFICATION:
     return clean_apply (t, get_modification (p));
-  case PATCH_BIRTH:
-    return t;
+  case PATCH_BRANCH:
+    ASSERT (N(p) <= 1, "ambiguous application");
   case PATCH_COMPOUND:
   case PATCH_AUTHOR:
     for (int i=0; i<N(p); i++)
       t= clean_apply (p[i], t);
+    return t;
+  case PATCH_BIRTH:
     return t;
   default:
     FAILED ("unsupported patch type");
@@ -199,12 +305,14 @@ apply (patch p, tree& t) {
   case PATCH_MODIFICATION:
     apply (t, get_modification (p));
     break;
-  case PATCH_BIRTH:
-    break;
+  case PATCH_BRANCH:
+    ASSERT (N(p) <= 1, "ambiguous application");
   case PATCH_COMPOUND:
   case PATCH_AUTHOR:
     for (int i=0; i<N(p); i++)
       apply (p[i], t);
+    break;
+  case PATCH_BIRTH:
     break;
   default:
     FAILED ("unsupported patch type");
@@ -219,9 +327,9 @@ patch
 invert (patch p, tree t) {
   switch (get_type (p)) {
   case PATCH_MODIFICATION:
-    return patch (invert (get_modification (p), t));
-  case PATCH_BIRTH:
-    return p;
+    return patch (get_inverse (p), get_modification (p));
+  case PATCH_BRANCH:
+    ASSERT (N(p) <= 1, "ambiguous application");
   case PATCH_COMPOUND:
     {
       int i, n=N(p);
@@ -230,13 +338,47 @@ invert (patch p, tree t) {
 	r[n-1-i]= invert (p[i], t);
 	t= clean_apply (p[i], t);
       }
-      return patch (r);
+      return patch (get_type (p) == PATCH_BRANCH, r);
     }
+  case PATCH_BIRTH:
+    return patch (get_author (p), !get_birth (p));
   case PATCH_AUTHOR:
     return patch (get_author (p), invert (p[0], t));
   default:
     FAILED ("unsupported patch type");
     return patch ();
+  }
+}
+
+bool
+possible_inverse (modification m1, modification m2) {
+  if (root (m1) != root (m2)) return false;
+  switch (m1->k) {
+  case MOD_ASSIGN:
+    return m2->k == MOD_ASSIGN;
+  case MOD_INSERT:
+    return m2->k == MOD_REMOVE && 
+           argument (m2) == insert_length (m1->t);
+  case MOD_REMOVE:
+    return m2->k == MOD_INSERT && 
+           insert_length (m2->t) == argument (m1);
+  case MOD_SPLIT:
+    return m2->k == MOD_JOIN && 
+           index (m2) == index (m1);
+  case MOD_JOIN:
+    return m2->k == MOD_SPLIT && 
+           index (m2) == index (m1);
+  case MOD_ASSIGN_NODE:
+    return m2->k == MOD_ASSIGN_NODE;
+  case MOD_INSERT_NODE:
+    return m2->k == MOD_REMOVE_NODE && 
+           index (m2) == argument (m1);
+  case MOD_REMOVE_NODE:
+    return m2->k == MOD_INSERT_NODE && 
+           argument (m2) == index (m1);
+  default:
+    FAILED ("invalid situation");
+    return false;
   }
 }
 
@@ -253,13 +395,18 @@ swap_basic (patch& p1, patch& p2) {
 }
 
 bool
-swap (patch& p1, patch& p2) {
+swap (patch& p1, patch& p2, double a1, double a2) {
+  if (is_nil (p1) || is_nil (p2)) return false;
+  if (get_type (p1) == PATCH_BRANCH)
+    return false;
+  if (get_type (p2) == PATCH_BRANCH)
+    return false;
   if (get_type (p1) == PATCH_COMPOUND) {
     int n= N(p1);
     array<patch> a (n);
     for (int i=0; i<n; i++) a[i]= p1[i];
     for (int i=n-1; i>=0; i--) {
-      if (!swap (a[i], p2)) return false;
+      if (!swap (a[i], p2, a1, a2)) return false;
       swap_basic (a[i], p2);
     }
     p1= p2;
@@ -271,7 +418,7 @@ swap (patch& p1, patch& p2) {
     array<patch> a (n);
     for (int i=0; i<n; i++) a[i]= p2[i];
     for (int i=0; i<n; i++) {
-      if (!swap (p1, a[i])) return false;
+      if (!swap (p1, a[i], a1, a2)) return false;
       swap_basic (p1, a[i]);
     }
     p2= p1;
@@ -280,33 +427,46 @@ swap (patch& p1, patch& p2) {
   }
   if (get_type (p1) == PATCH_AUTHOR) {
     patch s= p1[0];
-    bool r= swap (s, p2);
+    bool r= swap (s, p2, get_author (p1), a2);
     p2= patch (get_author (p1), p2);
     p1= s;
     return r;
   }
   if (get_type (p2) == PATCH_AUTHOR) {
     patch s= p2[0];
-    bool r= swap (p1, s);
+    bool r= swap (p1, s, a1, get_author (p2));
     p1= patch (get_author (p2), p1);
     p2= s;
     return r;
   }
-  if (get_type (p1) == PATCH_BIRTH ||
-      get_type (p2) == PATCH_BIRTH)
+  if (get_type (p1) == PATCH_BIRTH) {
+    if (get_author (p1) == a2) return false;
     return swap_basic (p1, p2);
+  }
+  if (get_type (p2) == PATCH_BIRTH) {
+    if (get_author (p2) == a1) return false;
+    return swap_basic (p1, p2);
+  }
   if (get_type (p1) == PATCH_MODIFICATION &&
       get_type (p2) == PATCH_MODIFICATION)
     {
       modification m1= get_modification (p1);
       modification m2= get_modification (p2);
+      modification i1= get_inverse (p1);
+      modification i2= get_inverse (p2);
       bool r= swap (m1, m2);
-      p1= patch (m1);
-      p2= patch (m2);
-      return r;
+      bool v= swap (i2, i1);
+      p1= patch (m1, i1);
+      p2= patch (m2, i2);
+      return r && v && possible_inverse (m1, i1) && possible_inverse (m2, i2);
     }
-  FAILED ("invalid situaltion");
+  FAILED ("invalid situation");
   return false;
+}
+
+bool
+swap (patch& p1, patch& p2) {
+  return swap (p1, p2, 0, 0);
 }
 
 bool
@@ -314,6 +474,38 @@ commute (patch p1, patch p2) {
   patch s1= p1;
   patch s2= p2;
   return swap (s1, s2);
+}
+
+/******************************************************************************
+* Joining simple patches if possible
+******************************************************************************/
+
+bool
+join (patch& p1, patch p2, tree t) {
+  if (get_type (p1) == PATCH_AUTHOR &&
+      get_type (p2) == PATCH_AUTHOR &&
+      get_author (p1) == get_author (p2))
+    {
+      double author= get_author (p1);
+      patch q1= p1[0];
+      patch q2= p2[0];
+      bool r= join (q1, q2, t);
+      if (r) p1= patch (author, q1);
+      return r;
+    }
+  if (get_type (p1) == PATCH_MODIFICATION &&
+      get_type (p2) == PATCH_MODIFICATION)
+    {
+      modification m1= get_modification (p1);
+      modification m2= get_modification (p2);
+      modification i2= get_inverse (p2);
+      modification i1= get_inverse (p1);
+      bool r= join (m1, m2, t);
+      bool v= join (i2, i1, clean_apply (p2, clean_apply (p1, t)));
+      if (r && v) p1= patch (m1, i2);
+      return r && v;
+    }
+  return false;
 }
 
 /******************************************************************************
@@ -327,6 +519,15 @@ insert (array<patch>& a, patch p) {
     for (i=0; i<n; i++)
       insert (a, p[i]);
   }
+  else if (get_type (p) == PATCH_MODIFICATION &&
+	   N(a) > 0 &&
+	   get_type (a[N(a)-1]) == PATCH_MODIFICATION &&
+	   (get_inverse (a[N(a)-1]) == get_modification (p) ||
+	    get_modification (a[N(a)-1]) == get_inverse (p)))
+    {
+      // cout << "Cancel " << a[N(a)-1] << " against " << p << "\n";
+      a->resize (N(a) - 1);
+    }
   else a << p;
 }
 
@@ -335,10 +536,31 @@ compactify (patch p) {
   switch (get_type (p)) {
   case PATCH_COMPOUND:
     {
-      array<patch> r;
-      insert (r, p);
-      if (N(r) == 1) return r[0];
-      return patch (r);
+      double a= 0;
+      for (int i=0; i<N(p); i++)
+	if (get_type (p[i]) != PATCH_AUTHOR) a= -1;
+	else if (a == 0) a= get_author (p[i]);
+	else if (a != get_author (p[i])) a= -1;
+      if (a <= 0) {
+	array<patch> r;
+	insert (r, p);
+	if (N(r) == 1) return r[0];
+	return patch (r);
+      }
+      else {
+	array<patch> r;
+	for (int i=0; i<N(p); i++) insert (r, p[i][0]);
+	if (N(r) == 1) return patch (a, r[0]);
+	return patch (a, patch (r));
+      }
+    }
+  case PATCH_BRANCH:
+    if (N(p) == 1) return p[0];
+    else {
+      int i, n= N(p);
+      array<patch> r (n);
+      for (i=0; i<n; i++) r[i]= compactify (p[i]);
+      return patch (true, r);
     }
   case PATCH_AUTHOR:
     return patch (get_author (p), compactify (p[0]));
@@ -386,14 +608,17 @@ cursor_hint (patch p, tree t) {
   switch (get_type (p)) {
   case PATCH_MODIFICATION:
     return cursor_hint (get_modification (p), t);
-  case PATCH_BIRTH:
-    return path ();
   case PATCH_COMPOUND:
-  case PATCH_AUTHOR:
     for (int i=0; i<N(p); i++) {
       path r= cursor_hint (p[i], t);
       if (!is_nil (r)) return r;
     }
+    return path ();
+  case PATCH_BRANCH:
+    if (N(p) == 0) return path ();
+  case PATCH_AUTHOR:
+    return cursor_hint (p[0], t);
+  case PATCH_BIRTH:
     return path ();
   default:
     FAILED ("unsupported patch type");

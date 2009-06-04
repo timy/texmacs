@@ -24,6 +24,11 @@ void mac_fix_paths ();
 #include <QApplication>
 #endif
 
+#if defined(X11TEXMACS) && defined(OS_MACOS)
+#include "MacOS/mac_app.h"
+#endif
+
+
 extern bool   char_clip;
 extern bool   reverse_colors;
 
@@ -49,6 +54,56 @@ test_routines () {
   test_math ();
 }
 #endif
+
+/******************************************************************************
+* Texmacs paths
+******************************************************************************/
+
+void
+TeXmacs_init_paths (int& argc, char** argv) {
+#ifdef QTTEXMACS
+  url exedir = url_system (qt_application_directory ());
+#else
+  url exedir = url_system(argv[0]) * ".." ;
+  if (! is_rooted(exedir)) {
+    exedir = url_pwd() * exedir ;
+  }
+#endif
+
+#if defined(AQUATEXMACS) ||(defined(QTTEXMACS) && defined(Q_WS_MAC)) || defined (OS_MACOS)
+  // Mac bundle environment initialization
+  // We set some environment variables when the executable
+  // is in a .app bundle on MacOSX
+  if (get_env ("TEXMACS_PATH") == "")
+    set_env ("TEXMACS_PATH", as_string(exedir * "../Resources/share/TeXmacs"));
+  //cout << get_env("PATH") * ":" * as_string(url("$PWD") * argv[0]
+  // * "../../Resources/share/TeXmacs/bin") << LF;
+  set_env ("PATH", get_env("PATH") * ":" *
+	           as_string (exedir * "../Resources/share/TeXmacs/bin"));
+  //system("set");
+#endif
+
+#ifdef __MINGW32__
+  // Win bundle environment initialization
+  // TEXMACS_PATH is set by assuming that the executable is in TeXmacs/bin/
+  // HOME is set to USERPROFILE
+  // PWD is set to HOME
+  // if PWD is lacking, then the path resolution machinery may not work
+  
+  if (get_env ("TEXMACS_PATH") == "")
+    set_env ("TEXMACS_PATH", as_string (exedir * ".."));
+  if (get_env ("HOME") == "")
+    set_env ("HOME", get_env("USERPROFILE"));
+  // HACK
+  // In WINE the variable PWD is already in the outer Unix environment 
+  // so we need to override it to have a correct behaviour
+  if ((get_env ("PWD") == "") || (get_env ("PWD")[0] == '/'))  {
+    set_env ("PWD", as_string (exedir));
+    // set_env ("PWD", get_env("HOME"));
+  }
+  // system("set");
+#endif
+}
 
 /******************************************************************************
 * Real main program for encaptulation of guile
@@ -190,6 +245,11 @@ TeXmacs_main (int argc, char** argv) {
   init_plugins ();
   bench_cumul ("initialize plugins");
   if (DEBUG_STD) cout << "TeXmacs] Opening display...\n";
+  
+#if defined(X11TEXMACS) && defined(OS_MACOS)
+  init_mac_application ();
+#endif
+    
   gui_open (argc, argv);
   set_default_font (the_default_font);
   if (DEBUG_STD) cout << "TeXmacs] Starting server...\n";
@@ -240,6 +300,11 @@ TeXmacs_main (int argc, char** argv) {
 
   if (DEBUG_STD) cout << "TeXmacs] Closing display...\n";
   gui_close ();
+  
+#if defined(X11TEXMACS) && defined(OS_MACOS)
+  finalize_mac_application ();
+#endif
+  
   if (DEBUG_STD) cout << "TeXmacs] Good bye...\n";
 }
 
@@ -287,60 +352,11 @@ immediate_options (int argc, char** argv) {
 
 int
 main (int argc, char** argv) {
-
 #ifdef QTTEXMACS
   // initialize the Qt application infrastructure
-  new QApplication(argc, argv);
+  new QApplication (argc, argv);
 #endif
-
-#ifdef QTTEXMACS
-  url exedir = url_system (qt_application_directory ());
-#else
-  url exedir = url_system(argv[0]);
-  if (! is_rooted(exedir)) {
-    exedir = url_pwd() * exedir * "..";
-  }
-#endif
-
-#if defined(AQUATEXMACS) ||(defined(QTTEXMACS) && defined(Q_WS_MAC))
-  // Mac bundle environment initialization 
-
-  // We set some environment variables when the executable is in a .app bundle on MacOSX
-  if (get_env ("TEXMACS_PATH") == "") {
-    set_env ("TEXMACS_PATH", as_string(exedir * "../Resources/share/TeXmacs"));
-  }
-  //cout << get_env("PATH") * ":" * as_string(url("$PWD") * argv[0] * "../../Resources/share/TeXmacs/bin") << LF;
-  set_env ("PATH",  get_env("PATH") * ":" * as_string(exedir * "../Resources/share/TeXmacs/bin"));
-  //system("set");
-#endif
-
-#ifdef __MINGW32__
-  // Win bundle environment initialization
-  
-  
-  // We set some environment variables 
-  // TEXMACS_PATH is set by assuming that the executable is in TeXmacs/bin/
-  // HOME is set to USERPROFILE
-  // PWD is set to HOME
-  // if PWD is lacking the internal TeXmacs path resolution machinery does not work
-  
-  if (get_env ("TEXMACS_PATH") == "") {
-    set_env ("TEXMACS_PATH", as_string (exedir * ".."));
-  }
-  if (get_env ("HOME") == "") {
-    set_env ("HOME", get_env("USERPROFILE"));
-  }
-  // HACK
-  // In WINE the variable PWD is already in the outer Unix environment 
-  // so we need to override it to have a correct behaviour
-  if ((get_env ("PWD") == "") || (get_env ("PWD")[0] == '/')) 
-  {
-    set_env ("PWD", as_string (exedir));
-//    set_env ("PWD", get_env("HOME"));
-  }
-//  system("set");
-#endif
-  
+  TeXmacs_init_paths (argc, argv);
   //cout << "Bench  ] Started TeXmacs\n";
   the_et     = tuple ();
   the_et->obs= ip_observer (path ());
